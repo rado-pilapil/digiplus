@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Phaser Slot Game – 5x5 Panel</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: black;
+      }
+      canvas {
+        display: block;
+        margin: 0 auto;
+        object-fit: contain;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      const symbols = ["🍒", "🍋", "🔔", "🍀", "💎"];
+      const isPortrait = window.innerHeight > window.innerWidth;
+      const scaleFactor = isPortrait ? 2 : 1;
+      let logoText = "";
+      let isWin = false;
+
+      class SlotScene extends Phaser.Scene {
+        constructor() {
+          super({ key: "SlotScene" });
+        }
+
+        preload() {
+          // Add a preload progress bar
+          this.load.on("progress", (value) => {
+            console.log(`Progress: ${value * 100}%`);
+          });
+
+          // Create a blob shape in the center of the canvas
+          this.blob = this.add.graphics();
+          this.blob.fillStyle(0xff69b4, 1); // Pink color
+          this.blob.fillCircle(0, 0, 150 * (isPortrait ? 0.75 : 0.5)); // Draw circle
+
+          // Position the blob in the center of the canvas
+          this.blob.setPosition(
+            this.cameras.main.centerX,
+            this.cameras.main.centerY
+          );
+
+          // Add "Loading" text inside the blob
+          this.loadingText = this.add
+            .text(
+              this.cameras.main.centerX,
+              this.cameras.main.centerY,
+              "Loading",
+              {
+                fontSize: `${32 * scaleFactor}px`,
+                fontFamily: "monospace",
+                color: "#fff",
+              }
+            )
+            .setOrigin(0.5);
+
+          // Set initial scale of the blob and text
+          this.initialBlobRadius = 150 * (isPortrait ? 1 : 0.5); // Default radius for the blob
+          this.blob.setScale(isPortrait ? 1 : 0.5);
+          this.loadingText.setScale(isPortrait ? 1 : 0.5);
+
+          // Animate the blob with pulsing and fading effect
+          this.tweens.add({
+            targets: this.blob,
+            scaleX: 1.5 * (isPortrait ? 1 : 0.5), // Scale horizontally
+            scaleY: 1.5 * (isPortrait ? 1 : 0.5), // Scale vertically
+            alpha: 0.35, // Fade out to 50% opacity
+            duration: 300, // Duration for one pulse cycle
+            yoyo: true, // Makes the animation go back to its original scale and opacity
+            repeat: -1, // Repeat indefinitely
+            ease: "Sine.easeInOut", // Smooth easing for smooth pulsing and fading
+          });
+
+          // Animate the "Loading" text along with the blob pulse
+          this.tweens.add({
+            targets: [this.blob, this.loadingText],
+            scaleX: 1.5 * (isPortrait ? 1 : 0.5), // Scale horizontally
+            scaleY: 1.5 * (isPortrait ? 1 : 0.5), // Scale vertically
+            duration: 300, // Duration for one pulse cycle
+            yoyo: true, // Makes the animation go back to its original scale
+            repeat: -1, // Repeat indefinitely
+            ease: "Sine.easeInOut", // Smooth easing for smooth pulsing
+            onUpdate: () => {
+              // Get the width of the loading text
+              const textWidth = this.loadingText.width;
+
+              // Calculate new radius based on the text width
+              const newBlobRadius = Math.max(
+                this.initialBlobRadius,
+                textWidth / 2 + 20
+              ); // Add some padding
+
+              // Scale the blob to fit the text width
+              this.blob.clear();
+              this.blob.fillStyle(0xff69b4, 1); // Reset the color
+              this.blob.fillCircle(0, 0, newBlobRadius); // Draw the resized circle
+
+              // Adjust font size dynamically to fit the blob size
+              const fontSize =
+                32 * scaleFactor * (newBlobRadius / this.initialBlobRadius); // Scale font size based on blob size
+              this.loadingText.setStyle({ fontSize: `${fontSize}px` });
+
+              // Keep the text centered in the blob
+              this.loadingText.setPosition(this.blob.x, this.blob.y);
+            },
+          });
+
+          // Preload graphic asset/s
+          this.load.image(
+            "handIcon",
+            "https://raw.githubusercontent.com/rado-pilapil/digiplus/e4616ba61e3f60c946390e5ddeac0dd2c9abdb51/.github/workflows/hand-icon.png"
+          );
+
+          // Preload Ambient SFX
+          this.load.audio(
+            "ambientSound",
+            "https://raw.githubusercontent.com/rado-pilapil/digiplus/d0dc242b88f2349be83b85b397cba9447fcfd19d/ambientBG.mp3"
+          );
+        }
+
+        async delay(ms) {
+          return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        async create() {
+          await this.delay(1000); //delay all create() logic creation for 1 sec
+
+          this.reelCount = 5;
+          this.reelSymbols = 5;
+          this.reelSpacing = 60 * scaleFactor;
+          this.reelHeight = this.reelSymbols * this.reelSpacing;
+          this.reels = [];
+          this.spinning = false;
+          this.spinCount = 0;
+          this.winningTweens = [];
+          this.logoTextTweens = [];
+          this.fireworksActive = false;
+          this.fireworkEvent = null;
+
+          const centerX = this.cameras.main.width / 2;
+          const centerY = this.cameras.main.height / 2;
+
+          this.ambientSFX = this.sound.add("ambientSound");
+          this.ambientSFX.play({ loop: true });
+
+          // Sound Toggle Button
+          const soundButtonDiameter = 60 * scaleFactor;
+          const soundButtonRadius = soundButtonDiameter / 2;
+          this.soundButton = this.add.container(
+            this.cameras.main.width - 80 * scaleFactor,
+            50 * scaleFactor
+          );
+          this.soundButton.setPosition(
+            42 * scaleFactor,
+            this.cameras.main.height - 42 * scaleFactor
+          );
+
+          // Create the sound button graphics
+          this.soundButtonCircle = this.add.graphics();
+          this.soundButtonCircle.fillStyle(0x333333, 1);
+          this.soundButtonCircle.fillCircle(0, 0, soundButtonRadius);
+          this.soundButton.add(this.soundButtonCircle);
+
+          this.soundButton.setDepth(2000);
+
+          this.soundButtonText = this.add
+            .text(0, 0, "🔊", {
+              fontSize: `${32 * scaleFactor}px`,
+              fontFamily: "monospace",
+              color: "#fff",
+              fontWeight: "bold",
+            })
+            .setOrigin(0.5);
+          this.soundButton.add(this.soundButtonText);
+
+          // Set the initial sound state to unmuted
+          this.isMuted = false;
+
+          // Add event listener for toggling sound
+          this.soundButton.setInteractive(
+            new Phaser.Geom.Circle(0, 0, soundButtonRadius),
+            Phaser.Geom.Circle.Contains
+          );
+
+          this.soundButton.on("pointerdown", () => this.toggleSound());
+
+          this.soundButton.on("pointerover", () =>
+            this.input.setDefaultCursor("pointer")
+          );
+
+          this.soundButton.on("pointerout", () =>
+            this.input.setDefaultCursor("default")
+          );
+
+          const logoY = (centerY - this.reelHeight / 2) / 2;
+          logoText = this.add
+            .text(centerX, logoY, "Retro Mania!", {
+              fontSize: `${52 * scaleFactor}px`,
+              fontFamily: "monospace",
+              color: "#fff",
+              stroke: "#000",
+              strokeThickness: 6,
+            })
+            .setOrigin(0.5);
+          this.originalLogoColor = "#fff";
+
+          const panelWidth = this.reelCount * 80 * scaleFactor;
+          const panelHeight = this.reelHeight;
+          const panelX = centerX - panelWidth / 2;
+          const panelY = centerY - panelHeight / 2;
+
+          const reelBackground = this.add.graphics();
+          reelBackground.fillStyle(0x2e2e2e, 1);
+          reelBackground.fillRoundedRect(
+            panelX,
+            panelY,
+            panelWidth,
+            panelHeight,
+            10
+          );
+
+          const reelStartX =
+            centerX - ((this.reelCount - 1) * 80 * scaleFactor) / 2;
+
+          for (let i = 0; i < this.reelCount; i++) {
+            const x = reelStartX + i * 80 * scaleFactor;
+            const reelContainer = this.add.container(0, 0);
+            const reel = [];
+
+            for (let j = 0; j < this.reelSymbols; j++) {
+              const y = centerY - this.reelSpacing * 2 + j * this.reelSpacing;
+              const symbol = this.add
+                .text(x, y, this.getRandomSymbol(), {
+                  fontSize: `${40 * scaleFactor}px`,
+                  fontFamily: "monospace",
+                })
+                .setOrigin(0.5);
+              reel.push(symbol);
+              reelContainer.add(symbol);
+            }
+
+            const maskShape = this.make.graphics();
+            const maskY = centerY - this.reelHeight / 2;
+            maskShape.fillStyle(0xffffff);
+            maskShape.fillRect(
+              x - 30 * scaleFactor,
+              maskY,
+              60 * scaleFactor,
+              this.reelHeight
+            );
+            const mask = maskShape.createGeometryMask();
+            reelContainer.setMask(mask);
+
+            this.reels.push({ symbols: reel, container: reelContainer, x });
+          }
+
+          const canvasHeight = this.cameras.main.height;
+          const paddingSpace = canvasHeight - (panelY + panelHeight);
+          const spinButtonY = panelY + panelHeight + paddingSpace / 2;
+
+          const buttonDiameter = 100 * scaleFactor;
+          const buttonRadius = buttonDiameter / 2;
+
+          this.spinButtonContainer = this.add.container(centerX, spinButtonY);
+          this.spinButtonCircle = this.add.graphics();
+          this.spinButtonCircle.fillStyle(0x333333, 1);
+          this.spinButtonCircle.fillCircle(0, 0, buttonRadius);
+          this.spinButtonContainer.add(this.spinButtonCircle);
+
+          this.spinButtonText = this.add
+            .text(0, 0, "SPIN", {
+              fontSize: `${32 * scaleFactor}px`,
+              fontFamily: "monospace",
+              color: "#fff",
+              fontWeight: "bold",
+            })
+            .setOrigin(0.5);
+          this.spinButtonContainer.add(this.spinButtonText);
+
+          this.spinButtonContainer.setInteractive(
+            new Phaser.Geom.Circle(0, 0, buttonRadius),
+            Phaser.Geom.Circle.Contains
+          );
+
+          this.spinButtonContainer.on("pointerdown", () => {
+            if (!this.spinning) {
+              this.spinReels();
+              this.scaleSpinButtonDown();
+              this.spinButtonContainer.setInteractive(false);
+            }
+          });
+
+          this.spinButtonContainer.on("pointerover", () => {
+            if (!this.spinning) {
+              this.spinButtonCircle.fillStyle(0x555555, 1);
+              this.spinButtonCircle.fillCircle(0, 0, buttonRadius);
+              this.spinButtonText.setColor("#ff0000");
+              this.input.setDefaultCursor("pointer");
+              this.scaleSpinButtonUp();
+            }
+          });
+
+          this.spinButtonContainer.on("pointerout", () => {
+            if (!this.spinning) {
+              this.spinButtonCircle.fillStyle(0x333333, 1);
+              this.spinButtonCircle.fillCircle(0, 0, buttonRadius);
+              this.spinButtonText.setColor("#fff");
+              this.input.setDefaultCursor("default");
+              this.scaleSpinButtonReset();
+            }
+          });
+
+          // === Hand icon logic ===
+          this.handIcon = this.add
+            .image(
+              centerX + buttonRadius + 55 * scaleFactor,
+              spinButtonY,
+              "handIcon"
+            )
+            .setOrigin(0.5)
+            .setDisplaySize(buttonDiameter + 35, buttonDiameter + 35);
+          // .setAlpha(1);
+
+          this.handTween = this.tweens.add({
+            targets: this.handIcon,
+            x: centerX + buttonRadius + 20 * scaleFactor,
+            alpha: { from: 0, to: 1 },
+            duration: 700,
+            ease: "Sine.easeInOut",
+            yoyo: true,
+            repeat: -1,
+            paused: false,
+          });
+
+          this.centerX = centerX;
+          this.spinButtonY = spinButtonY;
+          this.buttonRadius = buttonRadius;
+
+          // Show hand on start
+          // this.handIcon.setVisible(true);
+          // this.handTween.resume();
+        }
+
+        toggleSound() {
+          // Toggle the mute state
+          this.isMuted = !this.isMuted;
+
+          // Mute or unmute audio
+          this.ambientSFX.mute = this.isMuted;
+
+          // Change button icon text based on mute state
+          this.soundButtonText.setText(this.isMuted ? "🔇" : "🔊");
+        }
+
+        scaleSpinButtonDown() {
+          this.tweens.add({
+            targets: this.spinButtonContainer,
+            scaleX: 0.85,
+            scaleY: 0.85,
+            duration: 200,
+            ease: "Quad.easeInOut",
+          });
+        }
+
+        scaleSpinButtonUp() {
+          this.tweens.add({
+            targets: this.spinButtonContainer,
+            scaleX: 1.15,
+            scaleY: 1.15,
+            duration: 200,
+            ease: "Quad.easeInOut",
+          });
+        }
+
+        scaleSpinButtonReset() {
+          if (!this.spinning) {
+            this.tweens.add({
+              targets: this.spinButtonContainer,
+              scaleX: 1,
+              scaleY: 1,
+              duration: 200,
+              ease: "Quad.easeInOut",
+            });
+          }
+        }
+
+        getRandomSymbol(exclude = null) {
+          const options = exclude
+            ? symbols.filter((sym) => sym !== exclude)
+            : symbols;
+          return options[Math.floor(Math.random() * options.length)];
+        }
+
+        getRandomColor() {
+          const letters = "0123456789ABCDEF";
+          let color = "#";
+          for (let i = 0; i < 6; i++) {
+            color += letters[Math.floor(Math.random() * 16)];
+          }
+          return color;
+        }
+
+        startLogoColorChange() {
+          this.logoColorInterval = setInterval(() => {
+            logoText.setColor(this.getRandomColor());
+          }, 200);
+        }
+
+        stopLogoColorChange() {
+          clearInterval(this.logoColorInterval);
+          logoText.setColor(this.originalLogoColor);
+        }
+
+        fireworkEffect() {
+          if (this.fireworksActive) {
+            const randomX = Phaser.Math.Between(
+              50,
+              this.cameras.main.width - 50
+            );
+            const randomY = Phaser.Math.Between(
+              50,
+              this.cameras.main.height - 50
+            );
+
+            for (let i = 0; i < 30; i++) {
+              const particle = this.add.graphics();
+              particle.fillStyle(Phaser.Math.Between(0, 0xffffff), 1);
+              const angle = Phaser.Math.Between(0, 360);
+              const speed = Phaser.Math.Between(
+                100 * scaleFactor,
+                200 * scaleFactor
+              );
+              const life = Phaser.Math.Between(400, 700);
+
+              this.tweens.add({
+                targets: particle,
+                x: randomX + Math.cos(Phaser.Math.DegToRad(angle)) * speed,
+                y: randomY + Math.sin(Phaser.Math.DegToRad(angle)) * speed,
+                alpha: { from: 1, to: 0 },
+                duration: life,
+                onComplete: () => particle.destroy(),
+              });
+
+              particle.fillCircle(0, 0, 12 * scaleFactor);
+              particle.setPosition(randomX, randomY);
+            }
+          }
+        }
+
+        spinReels() {
+          if (isWin) {
+            this.fadeInWinMessage();
+
+            this.spinButtonContainer.removeAllListeners();
+
+            // this.spinButtonCircle.fillStyle(0x333333, 1);
+            // this.spinButtonCircle.fillCircle(0, 0, buttonRadius);
+            this.spinButtonText.setColor("#fff");
+            this.input.setDefaultCursor("default");
+
+            setTimeout(this.scaleSpinButtonReset(), 300);
+
+            return;
+          }
+
+          const centerX = this.cameras.main.width / 2;
+          const buttonDiameter = 100 * scaleFactor;
+          const buttonRadius = buttonDiameter / 2;
+
+          this.spinning = true;
+          this.spinCount++;
+          this.stopLogoColorChange();
+          this.fireworksActive = false;
+
+          // this.handIcon.setVisible(false);
+          this.handIcon.alpha = 0;
+          this.handTween.stop();
+
+          logoText.setText("Retro Mania!");
+          logoText.setScale(1);
+
+          this.input.setDefaultCursor("default");
+
+          this.winningTweens.forEach((tween) => tween.stop());
+          this.winningTweens = [];
+
+          this.logoTextTweens.forEach((tween) => tween.stop());
+          this.logoTextTweens = [];
+
+          this.reels.forEach((reel) => {
+            reel.symbols.forEach((symbol) => symbol.setScale(1));
+          });
+
+          if (this.winLine) this.winLine.setVisible(false);
+
+          this.spinButtonContainer.setInteractive(false);
+          this.spinButtonCircle.fillStyle(0x777777, 1);
+          this.spinButtonCircle.fillCircle(0, 0, this.buttonRadius);
+          this.spinButtonText.setColor("#aaaaaa");
+
+          const targetRowSymbols = [];
+
+          if (this.spinCount % 2 === 0) {
+            const winningSymbol = this.getRandomSymbol();
+            for (let i = 0; i < this.reelCount; i++) {
+              targetRowSymbols.push(winningSymbol);
+            }
+            isWin = true;
+          } else {
+            const used = [];
+            for (let i = 0; i < this.reelCount; i++) {
+              let symbol = this.getRandomSymbol();
+              while (used.includes(symbol)) {
+                symbol = this.getRandomSymbol();
+              }
+              used.push(symbol);
+              targetRowSymbols.push(symbol);
+            }
+          }
+
+          const spinTime = 1500;
+          const delayBetweenReels = 100;
+
+          for (let i = 0; i < this.reels.length; i++) {
+            const reel = this.reels[i].symbols;
+            const x = this.reels[i].x;
+
+            this.time.delayedCall(i * delayBetweenReels, () => {
+              const startTime = this.time.now;
+
+              const spinEvent = this.time.addEvent({
+                delay: 50,
+                loop: true,
+                callback: () => {
+                  for (let symbol of reel) {
+                    symbol.y += 50;
+
+                    if (
+                      symbol.y >
+                      this.cameras.main.centerY + this.reelHeight / 2
+                    ) {
+                      symbol.y -= this.reelSpacing * this.reelSymbols;
+                      symbol.setText(this.getRandomSymbol());
+                    }
+                  }
+
+                  if (this.time.now - startTime >= spinTime) {
+                    spinEvent.remove();
+                    this.snapSymbolsToGrid(reel, targetRowSymbols[i]);
+
+                    if (i === this.reels.length - 1) {
+                      this.spinning = false;
+
+                      this.spinButtonContainer.setInteractive();
+                      this.spinButtonCircle.fillStyle(0x333333, 1);
+                      this.spinButtonCircle.fillCircle(0, 0, this.buttonRadius);
+                      this.spinButtonText.setColor("#fff");
+                      this.scaleSpinButtonReset();
+
+                      // Show hand icon again
+                      // this.handIcon.setVisible(true);
+                      // this.handIcon.alpha = 1;
+                      // // this.handTween.play();
+                      this.handIcon.x =
+                        centerX + buttonRadius + 55 * scaleFactor;
+
+                      this.handTween = this.tweens.add({
+                        targets: this.handIcon,
+                        x: centerX + buttonRadius + 20 * scaleFactor,
+                        alpha: { from: 0, to: 1 },
+                        duration: 700,
+                        ease: "Sine.easeInOut",
+                        yoyo: true,
+                        repeat: -1,
+                        paused: false,
+                      });
+
+                      if (isWin) {
+                        this.drawWinLine();
+                        this.blinkWinLine();
+                        this.animateWinningSymbols();
+                        this.startLogoColorChange();
+
+                        logoText.setText("💎BIG WIN!💎");
+
+                        const bigWinTextTween = this.tweens.add({
+                          targets: logoText,
+                          scaleX: 1.25,
+                          scaleY: 1.25,
+                          duration: 300,
+                          repeat: -1,
+                          yoyo: true,
+                          ease: "Sine.easeInOut",
+                        });
+                        this.logoTextTweens.push(bigWinTextTween);
+
+                        this.fireworksActive = true;
+                        this.fireworkEffect();
+                        if (this.fireworkEvent) this.fireworkEvent.remove();
+
+                        this.fireworkEvent = this.time.addEvent({
+                          delay: 350,
+                          callback: this.fireworkEffect,
+                          callbackScope: this,
+                          loop: true,
+                        });
+                      }
+                    }
+                  }
+                },
+              });
+            });
+          }
+        }
+
+        snapSymbolsToGrid(reel, middleSymbol) {
+          const centerY = this.cameras.main.height / 2;
+          const startY = centerY - this.reelSpacing * 2;
+
+          for (let i = 0; i < this.reelSymbols; i++) {
+            const symbol = reel[i];
+            symbol.y = startY + i * this.reelSpacing;
+            symbol.setText(
+              i === 2 ? middleSymbol : this.getRandomSymbol(middleSymbol)
+            );
+          }
+        }
+
+        drawWinLine() {
+          const centerX = this.cameras.main.width / 2;
+          const centerY = this.cameras.main.height / 2;
+
+          if (this.winLine) this.winLine.destroy();
+
+          const winLineLength = (this.reelCount - 1) * 80 * scaleFactor;
+
+          this.winLine = this.add.graphics();
+          this.winLine.lineStyle(4, 0x00ff00, 1);
+          this.winLine.lineBetween(
+            centerX - winLineLength / 2,
+            centerY,
+            centerX + winLineLength / 2,
+            centerY
+          );
+          this.winLine.setVisible(true);
+        }
+
+        blinkWinLine() {
+          this.tweens.add({
+            targets: this.winLine,
+            alpha: { from: 1, to: 0 },
+            duration: 500,
+            repeat: -1,
+            yoyo: true,
+          });
+        }
+
+        animateWinningSymbols() {
+          for (let i = 0; i < this.reels.length; i++) {
+            const reel = this.reels[i].symbols;
+            const winningSymbol = reel[2];
+
+            const winningTween = this.tweens.add({
+              targets: winningSymbol,
+              scaleX: 1.35,
+              scaleY: 1.35,
+              duration: 500,
+              yoyo: true,
+              repeat: -1,
+              ease: "Sine.easeInOut",
+            });
+
+            this.winningTweens.push(winningTween);
+          }
+        }
+
+        fadeInWinMessage() {
+          // Display translucent black screen and message
+          const blackOverlay = this.add.graphics();
+          blackOverlay.fillStyle(0xffffff, 0.75);
+          blackOverlay.fillRect(
+            0,
+            0,
+            this.cameras.main.width,
+            this.cameras.main.height
+          );
+          blackOverlay.alpha = 0;
+          blackOverlay.setDepth(1000);
+
+          this.tweens.add({
+            targets: blackOverlay,
+            alpha: 1,
+            duration: 750,
+            ease: "Sine.easeInOut",
+          });
+
+          const winMessage = this.add
+            .text(
+              this.cameras.main.width / 2,
+              this.cameras.main.height / 3 - 30,
+              "PLAY FOR REAL\nFOR BIGGER WINS!",
+              {
+                fontSize: `${50 * (isPortrait ? 1.5 : 1)}px`,
+                fontFamily: "monospace",
+                color: "#0b3f87",
+                fontWeight: "bold",
+                align: "center",
+              }
+            )
+            .setOrigin(0.5)
+            .setAlpha(0);
+
+          this.createDownloadButton(
+            winMessage.x,
+            winMessage.y + 150 * scaleFactor
+          );
+
+          this.tweens.add({
+            targets: winMessage,
+            alpha: 1,
+            duration: 1000,
+            delay: 850,
+            ease: "Sine.easeInOut",
+            onStart: () => {
+              winMessage.setDepth(1001);
+            },
+          });
+
+          // Apply scale-up and down animation
+          this.tweens.add({
+            targets: winMessage,
+            scaleX: 1.1,
+            scaleY: 1.1,
+            duration: 600,
+            // delay: 1300,
+            yoyo: true,
+            repeat: -1,
+            ease: "Sine.easeInOut",
+          });
+        }
+
+        createDownloadButton(x, y) {
+          const buttonPadding = 10; // 10px padding
+          const buttonWidth = 250 * (isPortrait ? 2 : 1.5); // width of the button
+          const buttonHeight = 80 * (isPortrait ? 2 : 1.5); // height of the button
+          const buttonRadius = 15; // border radius for rounded corners
+
+          // Create button graphics container
+          const buttonContainer = this.add.container(x, y);
+
+          // Create button graphic (with bevel effect)
+          const downloadButton = this.add.graphics();
+
+          // Darker base color (for bevel effect)
+          downloadButton.fillStyle(0x007bff, 1);
+
+          // Draw base of the button with rounded corners
+          downloadButton.fillRoundedRect(
+            -buttonWidth / 2,
+            0,
+            buttonWidth,
+            buttonHeight,
+            buttonRadius
+          );
+
+          // Add lighter beveled edges
+          downloadButton.lineStyle(2, 0x0056b3); // Darker outline
+          downloadButton.strokeRoundedRect(
+            -buttonWidth / 2 + 2,
+            2,
+            buttonWidth - 4,
+            buttonHeight - 4,
+            buttonRadius
+          );
+
+          // Add inner bevel (light color)
+          downloadButton.lineStyle(2, 0x99ccff); // Lighter outline
+          downloadButton.strokeRoundedRect(
+            -buttonWidth / 2 - 2,
+            -2,
+            buttonWidth + 4,
+            buttonHeight + 4,
+            buttonRadius
+          );
+
+          // Create text object and add to the container
+          const downloadText = this.add
+            .text(0, 0, "Download", {
+              // fontSize: `${isPortrait ? 50 : 20}px`,
+              fontFamily: "monospace",
+              color: "#fff",
+              fontWeight: "bold",
+              align: "center",
+            })
+            .setOrigin(0.5);
+
+          // Dynamically adjust font size to fit within button (padding included)
+          // const textWidth = downloadText.width;
+          // const newFontSize = Math.min(
+          //   ((buttonWidth - 2 * buttonPadding) / textWidth) * 24 * scaleFactor,
+          //   24 * scaleFactor
+          // ); // Max font size is 24px
+          downloadText.setFontSize(isPortrait ? 55 : 40);
+
+          // Center the text inside the container, considering padding and text width
+          const textX = 0; // Center horizontally within4 container
+          const textY = buttonHeight / 2; // Center vertically within container
+          downloadText.setPosition(textX, textY);
+
+          // Add the graphics (button) and text to the container
+          buttonContainer.add([downloadButton, downloadText]);
+
+          // Make the button interactive
+          buttonContainer.setInteractive(
+            new Phaser.Geom.Rectangle(
+              -buttonWidth / 2,
+              0,
+              buttonWidth,
+              buttonHeight
+            ),
+            Phaser.Geom.Rectangle.Contains
+          );
+
+          buttonContainer.alpha = 0;
+
+          this.tweens.add({
+            targets: buttonContainer,
+            alpha: 1,
+            duration: 1000,
+            delay: 1000,
+            ease: "Sine.easeInOut",
+            onStart: () => {
+              buttonContainer.setDepth(1002);
+            },
+          });
+
+          this.tweens.add({
+            targets: buttonContainer,
+            scaleX: 1.1,
+            scaleY: 1.1,
+            duration: 600,
+            delay: 200,
+            yoyo: true,
+            repeat: -1,
+            ease: "Sine.easeInOut",
+          });
+
+          // Button click handler
+          buttonContainer.on("pointerdown", () => {
+            alert(
+              "Download button clicked! Implement download functionality here."
+            );
+          });
+
+          // Button hover effect
+          buttonContainer.on("pointerover", () => {
+            downloadButton.fillStyle(0x0056b3, 1); // Darker blue
+            this.input.setDefaultCursor("pointer");
+          });
+
+          buttonContainer.on("pointerout", () => {
+            downloadButton.fillStyle(0x007bff, 1); // Back to original blue
+            this.input.setDefaultCursor("default");
+          });
+        }
+      }
+
+      const config = {
+        type: Phaser.AUTO,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        scene: SlotScene,
+      };
+
+      const game = new Phaser.Game(config);
+    </script>
+  </body>
+</html>
